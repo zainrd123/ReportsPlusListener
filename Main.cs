@@ -75,11 +75,11 @@ namespace ReportsPlus
             CurrentlyOnDuty = onDuty;
             if (onDuty)
             {
-                GameFiber.StartNew(Interval);
+                GameFiber.StartNew(IntervalUpdate);
                 SetupEventHandlers();
                 AddCalloutEventWithCI();
-                UpdateWorldPeds();
-                UpdateWorldCars();
+                RefreshNearbyPeds();
+                RefreshNearbyVehicles();
                 Game.DisplayNotification("ReportsPlusListener loaded successfully.");
             }
         }
@@ -143,7 +143,7 @@ namespace ReportsPlus
             }
         }
 
-            private static string GenerateCalloutId()
+        private static string GenerateCalloutId()
         {
             return new Random().Next(10000, 100000).ToString();
         }
@@ -215,7 +215,7 @@ namespace ReportsPlus
         {
             if (ped.Exists())
             {
-                string data = GetWorldPedData(ped);
+                string data = FetchPedData(ped);
                 string oldFile = File.ReadAllText($"{DataPath}/worldPeds.data");
                 if (oldFile.Contains(LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(ped).FullName)) return;
 
@@ -264,17 +264,17 @@ namespace ReportsPlus
         }
 
 
-        private static void Interval()
+        private static void IntervalUpdate()
         {
             while (CurrentlyOnDuty)
             {
-                UpdateWorldPeds();
-                UpdateWorldCars();
+                RefreshNearbyPeds();
+                RefreshNearbyVehicles();
                 GameFiber.Wait(15000);
             }
         }
 
-        private static void UpdateWorldCars()
+        private static void RefreshNearbyVehicles()
         {
             Game.LogTrivial("ReportsPlus: Update worldCars.data");
             if (!Player.Exists())
@@ -282,23 +282,22 @@ namespace ReportsPlus
                 Game.LogTrivial("ReportsPlus: Failed to update worldCars.data; Invalid Player");
                 return;
             }
-            Vehicle[] allCars = Player.GetNearbyVehicles(15);
-            string[] carsList = new string[allCars.Length];
+            Vehicle[] nearbyCars = Player.GetNearbyVehicles(15);
+            string[] carsDataArray = new string[nearbyCars.Length];
 
-            for (int i = 0; i < allCars.Length; i++)
+            for (int i = 0; i < nearbyCars.Length; i++)
             {
-                Vehicle car = allCars[i];
-                if (car.Exists())
+                Vehicle vehicle = nearbyCars[i];
+                if (vehicle.Exists())
                 {
-                    carsList[Array.IndexOf(allCars, car)] = GetWorldCarData(car);
+                    carsDataArray[Array.IndexOf(nearbyCars, vehicle)] = FetchVehicleData(vehicle);
                 }
             }
-            File.WriteAllText($"{DataPath}/worldCars.data", string.Join(",", carsList));
+            File.WriteAllText($"{DataPath}/worldCars.data", string.Join(",", carsDataArray));
             Game.LogTrivial("ReportsPlus: Updated worldCars.data");
         }
 
-        // update world data
-        private static void UpdateWorldPeds()
+        private static void RefreshNearbyPeds()
         {
             Game.LogTrivial("ReportsPlus: Update worldPeds.data");
             if (!Player.Exists())
@@ -306,28 +305,26 @@ namespace ReportsPlus
                 Game.LogTrivial("ReportsPlus: Failed to update worldPeds.data; Invalid Player");
                 return;
             }
-            Ped[] allPeds = Player.GetNearbyPeds(15);
-            string[] persList = new string[allPeds.Length];
+            Ped[] nearbyPeds = Player.GetNearbyPeds(15);
+            string[] pedsDataArray = new string[nearbyPeds.Length];
 
-            for (int i = 0; i < allPeds.Length; i++)
+            for (int i = 0; i < nearbyPeds.Length; i++)
             {
-                Ped ped = allPeds[i];
+                Ped ped = nearbyPeds[i];
                 if (ped.Exists())
                 {
-                    persList[Array.IndexOf(allPeds, ped)] = GetWorldPedData(ped);
+                    pedsDataArray[Array.IndexOf(nearbyPeds, ped)] = FetchPedData(ped);
                 }
             }
 
-            File.WriteAllText($"{DataPath}/worldPeds.data", string.Join(",", persList));
+            File.WriteAllText($"{DataPath}/worldPeds.data", string.Join(",", pedsDataArray));
 
             Game.LogTrivial("ReportsPlus: Updated worldPeds.data");
         }
 
-        // world data
-        // STP
-        private static string GetRegistration(Vehicle car)
+        private static string FetchVehicleRegistration(Vehicle vehicle)
         {
-            switch (StopThePed.API.Functions.getVehicleRegistrationStatus(car))
+            switch (StopThePed.API.Functions.getVehicleRegistrationStatus(vehicle))
             {
                 case STPVehicleStatus.Expired:
                     return "Expired";
@@ -339,9 +336,9 @@ namespace ReportsPlus
             return "";
         }
 
-        private static string GetInsurance(Vehicle car)
+        private static string FetchVehicleInsurance(Vehicle vehicle)
         {
-            switch (StopThePed.API.Functions.getVehicleInsuranceStatus(car))
+            switch (StopThePed.API.Functions.getVehicleInsuranceStatus(vehicle))
             {
                 case STPVehicleStatus.Expired:
                     return "Expired";
@@ -353,29 +350,26 @@ namespace ReportsPlus
             return "";
         }
 
-        private static string GetWorldCarData(Vehicle car)
+        private static string FetchVehicleData(Vehicle vehicle)
         {
-            string driver = car.Driver.Exists() ? LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(car.Driver).FullName : "";
-            string color = Rage.Native.NativeFunction.Natives.GET_VEHICLE_LIVERY<int>(car) != -1 ? "" : $"{car.PrimaryColor.R}-{car.PrimaryColor.G}-{car.PrimaryColor.B}";
-            return $"licensePlate={car.LicensePlate}&model={car.Model.Name}&isStolen={car.IsStolen}&isPolice={car.IsPoliceVehicle}&owner={LSPD_First_Response.Mod.API.Functions.GetVehicleOwnerName(car)}&driver={driver}&registration={GetRegistration(car)}&insurance={GetInsurance(car)}&color={color}";
+            string driverName = vehicle.Driver.Exists() ? LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(vehicle.Driver).FullName : "";
+            string colorCode = Rage.Native.NativeFunction.Natives.GET_VEHICLE_LIVERY<int>(vehicle) != -1 ? "" : $"{vehicle.PrimaryColor.R}-{vehicle.PrimaryColor.G}-{vehicle.PrimaryColor.B}";
+            return $"licensePlate={vehicle.LicensePlate}&model={vehicle.Model.Name}&isStolen={vehicle.IsStolen}&isPolice={vehicle.IsPoliceVehicle}&owner={LSPD_First_Response.Mod.API.Functions.GetVehicleOwnerName(vehicle)}&driver={driverName}&registration={FetchVehicleRegistration(vehicle)}&insurance={FetchVehicleInsurance(vehicle)}&color={colorCode}";
         }
 
-
-
-        private static string GetWorldPedData(Ped ped)
+        private static string FetchPedData(Ped ped)
         {
-            Persona persona = LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(ped);
-            string birthday = $"{persona.Birthday.Month}/{persona.Birthday.Day}/{persona.Birthday.Year}";
-            return $"name={persona.FullName}&birthday={birthday}&gender={persona.Gender}&isWanted={persona.Wanted}&licenseStatus={persona.ELicenseState}&relationshipGroup={ped.RelationshipGroup.Name}";
+            Persona personaDetails = LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(ped);
+            string birthDate = $"{personaDetails.Birthday.Month}/{personaDetails.Birthday.Day}/{personaDetails.Birthday.Year}";
+            return $"name={personaDetails.FullName}&birthday={birthDate}&gender={personaDetails.Gender}&isWanted={personaDetails.Wanted}&licenseStatus={personaDetails.ELicenseState}&relationshipGroup={ped.RelationshipGroup.Name}";
         }
 
-        private int CalculateAge(DateTime birthday)
+        private int CalculatePedAge(DateTime birthDate)
         {
             DateTime today = DateTime.Today;
-            int age = today.Year - birthday.Year;
-            if (birthday > today.AddYears(-age)) age--;
+            int age = today.Year - birthDate.Year;
+            if (birthDate > today.AddYears(-age)) age--;
             return age;
         }
-
     }
 }
