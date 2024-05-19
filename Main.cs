@@ -56,12 +56,12 @@ namespace ReportsPlus
             if (!pluginsInstalled)
             {
                 Game.DisplayNotification("~r~ReportsPlus requires CalloutInterface.dll and StopThePed.dll to be installed.");
-                Game.LogTrivial("ReportsPlus requires CalloutInterface.dll and StopThePed.dll to be installed.");
+                Game.LogTrivial("ReportsPlus requires CalloutInterface.dll and StopThePed.dll to be installed.------------------------------------------------------------------------------------------");
                 return; // Exit initialization if plugins are missing
             }
 
             LSPD_First_Response.Mod.API.Functions.OnOnDutyStateChanged += OnOnDutyStateChangedHandler;
-            Game.LogTrivial("ReportsPlus Listener Plugin initialized.");
+            Game.LogTrivial("ReportsPlus Listener Plugin initialized.------------------------------------------------------------------------------------------");
         }
 
 
@@ -199,7 +199,7 @@ namespace ReportsPlus
                 CICalloutEvents();
                 RefreshNearbyPeds();
                 RefreshNearbyVehicles();
-                Game.DisplayNotification("ReportsPlus Listener loaded successfully.");
+                Game.DisplayNotification("ReportsPlus Listener loaded successfully.------------------------------------------------------------------------------------------");
             }
         }
         private static void UpdateCurrentIDDoc(Ped ped)
