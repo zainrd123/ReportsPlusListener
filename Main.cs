@@ -14,91 +14,98 @@ namespace ReportsPlus
 {
     public class Main : Plugin
     {
+        // Vars
         private static readonly string DataPath = "ReportsPlus\\data";
-        private static XDocument currentIDDoc;
-        private static XDocument calloutDoc;
-        private GameFiber dataCollectionFiber;
+        private static XDocument currentIDXDoc;
+        private static XDocument calloutXDoc;
+        private GameFiber dataCollection;
         internal static bool CurrentlyOnDuty;
         internal static Ped Player => Game.LocalPlayer.Character;
-        private static Dictionary<LHandle, string> calloutIds = new Dictionary<LHandle, string>();
+        private static Dictionary<LHandle, string> calloutDir = new Dictionary<LHandle, string>();
 
 
+
+        // Plugin Checks
+        private bool CheckPlugins()
+        {
+            bool hasCalloutInterface = IsPluginInstalled("CalloutInterface");
+            bool hasStopThePed = IsPluginInstalled("StopThePed");
+
+            return hasCalloutInterface && hasStopThePed;
+        }
+
+        private bool IsPluginInstalled(string pluginName)
+        {
+            return LSPD_First_Response.Mod.API.Functions.GetAllUserPlugins().Any(x => x.GetName().Name.Equals(pluginName));
+        }
+
+
+        // Init
         public override void Initialize()
         {
-            calloutIds.Clear();
+            calloutDir.Clear();
             if (!Directory.Exists(DataPath))
                 Directory.CreateDirectory(DataPath);
 
-            currentIDDoc = new XDocument(new XElement("IDs"));
-            LoadCurrentIDDocument();
-            LoadCalloutDocument();
+            currentIDXDoc = new XDocument(new XElement("IDs"));
+            LoadCurrentIDXDocument();
+            LoadCalloutXDocument();
+
+            // Check for required plugins
+            bool pluginsInstalled = CheckPlugins();
+            if (!pluginsInstalled)
+            {
+                Game.DisplayNotification("~r~ReportsPlus requires CalloutInterface.dll and StopThePed.dll to be installed.");
+                Game.LogTrivial("ReportsPlus requires CalloutInterface.dll and StopThePed.dll to be installed.");
+                return; // Exit initialization if plugins are missing
+            }
 
             LSPD_First_Response.Mod.API.Functions.OnOnDutyStateChanged += OnOnDutyStateChangedHandler;
-            Game.LogTrivial("ReportsPlusListener Plugin initialized.");
+            Game.LogTrivial("ReportsPlus Listener Plugin initialized.");
         }
 
-        public override void Finally()
-        {
-            LSPD_First_Response.Mod.API.Functions.OnOnDutyStateChanged -= OnOnDutyStateChangedHandler;
-            if (dataCollectionFiber != null && dataCollectionFiber.IsAlive)
-                dataCollectionFiber.Abort();
 
-            currentIDDoc.Save(Path.Combine(DataPath, "currentID.xml"));
-            calloutDoc.Save(Path.Combine(DataPath, "callout.xml"));
-            Game.LogTrivial("ReportsPlusListener cleaned up.");
-        }
 
-        private void LoadCurrentIDDocument()
+        // Loaders
+        private void LoadCurrentIDXDocument()
         {
             string filePath = Path.Combine(DataPath, "currentID.xml");
             if (File.Exists(filePath))
             {
-                currentIDDoc = XDocument.Load(filePath);
+                currentIDXDoc = XDocument.Load(filePath);
             }
         }
-        private void LoadCalloutDocument()
+        private void LoadCalloutXDocument()
         {
             string filePath = Path.Combine(DataPath, "callout.xml");
             if (File.Exists(filePath))
             {
-                calloutDoc = XDocument.Load(filePath);
+                calloutXDoc = XDocument.Load(filePath);
             }
             else
             {
-                calloutDoc = new XDocument(new XElement("Callouts"));
-                calloutDoc.Save(filePath);
+                calloutXDoc = new XDocument(new XElement("Callouts"));
+                calloutXDoc.Save(filePath);
             }
         }
 
-        private void OnOnDutyStateChangedHandler(bool onDuty)
-        {
-            CurrentlyOnDuty = onDuty;
-            if (onDuty)
-            {
-                GameFiber.StartNew(IntervalUpdate);
-                SetupEventHandlers();
-                AddCalloutEventWithCI();
-                RefreshNearbyPeds();
-                RefreshNearbyVehicles();
-                Game.DisplayNotification("ReportsPlusListener loaded successfully.");
-            }
-        }
 
+
+        // Establish Events
         private void SetupEventHandlers()
         {
-            StopThePed.API.Events.askIdEvent += Events_askIdEvent;
-            StopThePed.API.Events.pedArrestedEvent += Events_pedArrestedEvent;
-            StopThePed.API.Events.patDownPedEvent += Events_patDownPedEvent;
-            StopThePed.API.Events.askDriverLicenseEvent += Events_askDriverLicenseEvent;
-            StopThePed.API.Events.askPassengerIdEvent += Events_askPassengerIdEvent;
-            StopThePed.API.Events.stopPedEvent += Events_stopPedEvent;
+            StopThePed.API.Events.askIdEvent += AskIDEvent;
+            StopThePed.API.Events.pedArrestedEvent += PedArrestedEvent;
+            StopThePed.API.Events.patDownPedEvent += PatDownPedEvent;
+            StopThePed.API.Events.askDriverLicenseEvent += AskLicenseEvent;
+            StopThePed.API.Events.askPassengerIdEvent += AskPassengerIDEvent;
+            StopThePed.API.Events.stopPedEvent += STPStopPedEvent;
         }
-
-        private static void AddCalloutEventWithCI()
+        private static void CICalloutEvents()
         {
-            LSPD_First_Response.Mod.API.Events.OnCalloutDisplayed += Events_OnCalloutDisplayed;
+            LSPD_First_Response.Mod.API.Events.OnCalloutDisplayed += CalloutDisplayedEvent;
 
-            void Events_OnCalloutDisplayed(LHandle handle)
+            void CalloutDisplayedEvent(LHandle handle)
             {
                 Game.LogTrivial("ReportsPlus: Displaying Callout");
                 Callout callout = CalloutInterface.API.Functions.GetCalloutFromHandle(handle);
@@ -123,9 +130,9 @@ namespace ReportsPlus
                 string currentDate = DateTime.Now.ToString("yyyy-MM-dd");
 
                 // Clear existing callouts before adding new one
-                calloutDoc.Root.Elements("Callout").Remove();
+                calloutXDoc.Root.Elements("Callout").Remove();
 
-                XElement calloutElement = new XElement("Callout",
+                XElement calloutElements = new XElement("Callout",
                     new XElement("Number", calloutId),
                     new XElement("Type", callout.CalloutMessage),
                     new XElement("Description", description),
@@ -137,26 +144,23 @@ namespace ReportsPlus
                     new XElement("StartDate", currentDate)
                 );
 
-                calloutDoc.Root.Add(calloutElement);
-                calloutDoc.Save(Path.Combine(DataPath, "callout.xml"));
+                calloutXDoc.Root.Add(calloutElements);
+                calloutXDoc.Save(Path.Combine(DataPath, "callout.xml"));
                 Game.LogTrivial($"ReportsPlus: Callout {calloutId} data updated and displayed.");
             }
         }
 
-        private static string GenerateCalloutId()
-        {
-            return new Random().Next(10000, 100000).ToString();
-        }
 
-        internal static void UpdateCalloutData(string calloutId, string key, string value)
+
+        // Updates
+        internal static void UpdateCalloutDataDoc(string calloutId, string key, string value)
         {
-            Game.LogTrivial("ReportsPlus: Update callout data");
 
             // Load the XML file if not already loaded or if it might have changed
-            calloutDoc = XDocument.Load(Path.Combine(DataPath, "callout.xml"));
+            calloutXDoc = XDocument.Load(Path.Combine(DataPath, "callout.xml"));
 
             // Find the callout with the specified ID
-            XElement calloutElement = calloutDoc.Descendants("Callout")
+            XElement calloutElement = calloutXDoc.Descendants("Callout")
                                                 .FirstOrDefault(c => c.Element("ID")?.Value == calloutId);
 
             if (calloutElement != null)
@@ -170,14 +174,14 @@ namespace ReportsPlus
                     Game.LogTrivial($"ReportsPlus: Updated {key} for callout ID {calloutId} to {value}");
 
                     // Save the changes back to the XML file
-                    calloutDoc.Save(Path.Combine(DataPath, "callout.xml"));
+                    calloutXDoc.Save(Path.Combine(DataPath, "callout.xml"));
                 }
                 else
                 {
                     // Key does not exist, so add it
                     calloutElement.Add(new XElement(key, value));
                     Game.LogTrivial($"ReportsPlus: Added {key} for callout ID {calloutId} with value {value}");
-                    calloutDoc.Save(Path.Combine(DataPath, "callout.xml"));
+                    calloutXDoc.Save(Path.Combine(DataPath, "callout.xml"));
                 }
             }
             else
@@ -185,16 +189,27 @@ namespace ReportsPlus
                 Game.LogTrivial("ReportsPlus: No callout found with the specified ID");
             }
         }
-
-        private static void UpdateCurrentID(Ped ped)
+        private void OnOnDutyStateChangedHandler(bool onDuty)
         {
-            Game.LogTrivial("ReportsPlus: Update currentID.data");
+            CurrentlyOnDuty = onDuty;
+            if (onDuty)
+            {
+                GameFiber.StartNew(UpdateInt);
+                SetupEventHandlers();
+                CICalloutEvents();
+                RefreshNearbyPeds();
+                RefreshNearbyVehicles();
+                Game.DisplayNotification("ReportsPlus Listener loaded successfully.");
+            }
+        }
+        private static void UpdateCurrentIDDoc(Ped ped)
+        {
 
             if (!ped.Exists())
                 return;
 
             var persona = LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(ped);
-            var existingEntry = currentIDDoc.Descendants("ID").FirstOrDefault(e => e.Element("Name")?.Value == persona.FullName);
+            var existingEntry = currentIDXDoc.Descendants("ID").FirstOrDefault(e => e.Element("Name")?.Value == persona.FullName);
             if (existingEntry != null)
                 return;
 
@@ -206,77 +221,93 @@ namespace ReportsPlus
                 new XElement("Index", index)
             );
 
-            currentIDDoc.Root.Add(newEntry);
-            currentIDDoc.Save(Path.Combine(DataPath, "currentID.xml"));
+            currentIDXDoc.Root.Add(newEntry);
+            currentIDXDoc.Save(Path.Combine(DataPath, "currentID.xml"));
             Game.LogTrivial("ReportsPlus: Updated currentID.data");
         }
 
-        private static void AddWorldPed(Ped ped)
+
+
+        // Events
+        private static void AskIDEvent(Ped ped)
         {
-            if (ped.Exists())
-            {
-                string data = FetchPedData(ped);
-                string oldFile = File.ReadAllText($"{DataPath}/worldPeds.data");
-                if (oldFile.Contains(LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(ped).FullName)) return;
-
-                string addComma = oldFile.Length > 0 ? "," : "";
-
-                File.WriteAllText($"{DataPath}/worldPeds.data", $"{oldFile}{addComma}{data}");
-            }
+            AddPed(ped);
+            UpdateCurrentIDDoc(ped);
         }
-
-        // STP
-        private static void Events_askIdEvent(Ped ped)
+        private static void PedArrestedEvent(Ped ped)
         {
-            AddWorldPed(ped);
-            UpdateCurrentID(ped);
+            AddPed(ped);
         }
-
-        private static void Events_pedArrestedEvent(Ped ped)
+        private static void PatDownPedEvent(Ped ped)
         {
-            AddWorldPed(ped);
+            AddPed(ped);
+            UpdateCurrentIDDoc(ped);
         }
-
-        private static void Events_patDownPedEvent(Ped ped)
+        private static void AskLicenseEvent(Ped ped)
         {
-            AddWorldPed(ped);
-            UpdateCurrentID(ped);
+            AddPed(ped);
+            UpdateCurrentIDDoc(ped);
         }
-
-        private static void Events_askDriverLicenseEvent(Ped ped)
-        {
-            AddWorldPed(ped);
-            UpdateCurrentID(ped);
-        }
-
-        private static void Events_askPassengerIdEvent(Vehicle vehicle)
+        private static void AskPassengerIDEvent(Vehicle vehicle)
         {
             Ped[] passengers = vehicle.Passengers;
             for (int i = 0; i < passengers.Length; i++)
             {
-                UpdateCurrentID(passengers[i]);
+                UpdateCurrentIDDoc(passengers[i]);
             }
         }
-
-        private static void Events_stopPedEvent(Ped ped)
+        private static void STPStopPedEvent(Ped ped)
         {
-            AddWorldPed(ped);
+            AddPed(ped);
         }
 
 
-        private static void IntervalUpdate()
+
+        // Fetch Data
+        private static string FetchVehicleRegistration(Vehicle vehicle)
         {
-            while (CurrentlyOnDuty)
+            switch (StopThePed.API.Functions.getVehicleRegistrationStatus(vehicle))
             {
-                RefreshNearbyPeds();
-                RefreshNearbyVehicles();
-                GameFiber.Wait(15000);
+                case STPVehicleStatus.Expired:
+                    return "Expired";
+                case STPVehicleStatus.None:
+                    return "None";
+                case STPVehicleStatus.Valid:
+                    return "Valid";
             }
+            return "";
+        }
+        private static string FetchVehicleInsurance(Vehicle vehicle)
+        {
+            switch (StopThePed.API.Functions.getVehicleInsuranceStatus(vehicle))
+            {
+                case STPVehicleStatus.Expired:
+                    return "Expired";
+                case STPVehicleStatus.None:
+                    return "None";
+                case STPVehicleStatus.Valid:
+                    return "Valid";
+            }
+            return "";
+        }
+        private static string FetchVehicleData(Vehicle vehicle)
+        {
+            string driverName = vehicle.Driver.Exists() ? LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(vehicle.Driver).FullName : "";
+            string colorCode = Rage.Native.NativeFunction.Natives.GET_VEHICLE_LIVERY<int>(vehicle) != -1 ? "" : $"{vehicle.PrimaryColor.R}-{vehicle.PrimaryColor.G}-{vehicle.PrimaryColor.B}";
+            return $"licensePlate={vehicle.LicensePlate}&model={vehicle.Model.Name}&isStolen={vehicle.IsStolen}&isPolice={vehicle.IsPoliceVehicle}&owner={LSPD_First_Response.Mod.API.Functions.GetVehicleOwnerName(vehicle)}&driver={driverName}&registration={FetchVehicleRegistration(vehicle)}&insurance={FetchVehicleInsurance(vehicle)}&color={colorCode}";
+        }
+        private static string FetchPedData(Ped ped)
+        {
+            Persona personaDetails = LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(ped);
+            string birthDate = $"{personaDetails.Birthday.Month}/{personaDetails.Birthday.Day}/{personaDetails.Birthday.Year}";
+            return $"name={personaDetails.FullName}&birthday={birthDate}&gender={personaDetails.Gender}&isWanted={personaDetails.Wanted}&licenseStatus={personaDetails.ELicenseState}&relationshipGroup={ped.RelationshipGroup.Name}";
         }
 
+
+
+        // Update Methods
         private static void RefreshNearbyVehicles()
         {
-            Game.LogTrivial("ReportsPlus: Update worldCars.data");
             if (!Player.Exists())
             {
                 Game.LogTrivial("ReportsPlus: Failed to update worldCars.data; Invalid Player");
@@ -296,13 +327,11 @@ namespace ReportsPlus
             File.WriteAllText($"{DataPath}/worldCars.data", string.Join(",", carsDataArray));
             Game.LogTrivial("ReportsPlus: Updated worldCars.data");
         }
-
         private static void RefreshNearbyPeds()
         {
-            Game.LogTrivial("ReportsPlus: Update worldPeds.data");
             if (!Player.Exists())
             {
-                Game.LogTrivial("ReportsPlus: Failed to update worldPeds.data; Invalid Player");
+                Game.LogTrivial("ReportsPlus: Failed to update worldPeds.data; Player is invalid");
                 return;
             }
             Ped[] nearbyPeds = Player.GetNearbyPeds(15);
@@ -322,54 +351,55 @@ namespace ReportsPlus
             Game.LogTrivial("ReportsPlus: Updated worldPeds.data");
         }
 
-        private static string FetchVehicleRegistration(Vehicle vehicle)
-        {
-            switch (StopThePed.API.Functions.getVehicleRegistrationStatus(vehicle))
-            {
-                case STPVehicleStatus.Expired:
-                    return "Expired";
-                case STPVehicleStatus.None:
-                    return "None";
-                case STPVehicleStatus.Valid:
-                    return "Valid";
-            }
-            return "";
-        }
 
-        private static string FetchVehicleInsurance(Vehicle vehicle)
-        {
-            switch (StopThePed.API.Functions.getVehicleInsuranceStatus(vehicle))
-            {
-                case STPVehicleStatus.Expired:
-                    return "Expired";
-                case STPVehicleStatus.None:
-                    return "None";
-                case STPVehicleStatus.Valid:
-                    return "Valid";
-            }
-            return "";
-        }
 
-        private static string FetchVehicleData(Vehicle vehicle)
-        {
-            string driverName = vehicle.Driver.Exists() ? LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(vehicle.Driver).FullName : "";
-            string colorCode = Rage.Native.NativeFunction.Natives.GET_VEHICLE_LIVERY<int>(vehicle) != -1 ? "" : $"{vehicle.PrimaryColor.R}-{vehicle.PrimaryColor.G}-{vehicle.PrimaryColor.B}";
-            return $"licensePlate={vehicle.LicensePlate}&model={vehicle.Model.Name}&isStolen={vehicle.IsStolen}&isPolice={vehicle.IsPoliceVehicle}&owner={LSPD_First_Response.Mod.API.Functions.GetVehicleOwnerName(vehicle)}&driver={driverName}&registration={FetchVehicleRegistration(vehicle)}&insurance={FetchVehicleInsurance(vehicle)}&color={colorCode}";
-        }
-
-        private static string FetchPedData(Ped ped)
-        {
-            Persona personaDetails = LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(ped);
-            string birthDate = $"{personaDetails.Birthday.Month}/{personaDetails.Birthday.Day}/{personaDetails.Birthday.Year}";
-            return $"name={personaDetails.FullName}&birthday={birthDate}&gender={personaDetails.Gender}&isWanted={personaDetails.Wanted}&licenseStatus={personaDetails.ELicenseState}&relationshipGroup={ped.RelationshipGroup.Name}";
-        }
-
+        // Util
         private int CalculatePedAge(DateTime birthDate)
         {
             DateTime today = DateTime.Today;
             int age = today.Year - birthDate.Year;
             if (birthDate > today.AddYears(-age)) age--;
             return age;
+        }
+        private static string GenerateCalloutId()
+        {
+            return new Random().Next(10000, 100000).ToString();
+        }
+        private static void AddPed(Ped ped)
+        {
+            if (ped.Exists())
+            {
+                string data = FetchPedData(ped);
+                string oldFile = File.ReadAllText($"{DataPath}/worldPeds.data");
+                if (oldFile.Contains(LSPD_First_Response.Mod.API.Functions.GetPersonaForPed(ped).FullName)) return;
+
+                string addComma = oldFile.Length > 0 ? "," : "";
+
+                File.WriteAllText($"{DataPath}/worldPeds.data", $"{oldFile}{addComma}{data}");
+            }
+        }
+        private static void UpdateInt()
+        {
+            while (CurrentlyOnDuty)
+            {
+                RefreshNearbyPeds();
+                RefreshNearbyVehicles();
+                GameFiber.Wait(15000);
+            }
+        }
+
+
+
+        // Finally
+        public override void Finally()
+        {
+            LSPD_First_Response.Mod.API.Functions.OnOnDutyStateChanged -= OnOnDutyStateChangedHandler;
+            if (dataCollection != null && dataCollection.IsAlive)
+                dataCollection.Abort();
+
+            currentIDXDoc.Save(Path.Combine(DataPath, "currentID.xml"));
+            calloutXDoc.Save(Path.Combine(DataPath, "callout.xml"));
+            Game.LogTrivial("ReportsPlus Listener cleaned up.");
         }
     }
 }
